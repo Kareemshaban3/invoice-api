@@ -18,14 +18,21 @@ class SuppliersController extends Controller
         if ($s = $request->query('search')) {
             $q->where(function ($w) use ($s) {
                 $w->where('name', 'like', "%{$s}%")
-                    ->orWhere('phone', 'like', "%{$s}%")
-                    ->orWhere('email', 'like', "%{$s}%");
+                  ->orWhere('phone', 'like', "%{$s}%")
+                  ->orWhere('email', 'like', "%{$s}%")
+                  ->orWhere('tax_number', 'like', "%{$s}%");
             });
         }
 
-        return response()->json([
-            'data' => $q->latest('id')->paginate($perPage),
-        ]);
+        if ($status = $request->query('status')) {
+            $q->where('status', $status);
+        }
+
+        if ($categoryId = $request->query('category_id')) {
+            $q->where('category_id', $categoryId);
+        }
+
+        return $q->latest('id')->paginate($perPage);
     }
 
     public function store(StoreSuppliersRequest $request)
@@ -40,9 +47,7 @@ class SuppliersController extends Controller
 
     public function show(Suppliers $supplier)
     {
-        return response()->json([
-            'data' => $supplier,
-        ]);
+        return response()->json(['data' => $supplier], 200);
     }
 
     public function update(UpdateSuppliersRequest $request, Suppliers $supplier)
@@ -59,8 +64,6 @@ class SuppliersController extends Controller
     {
         $supplier->delete();
 
-        return response()->json([
-            'message' => __('messages.deleted'),
-        ]);
+        return response()->json(['message' => __('messages.deleted')]);
     }
 }

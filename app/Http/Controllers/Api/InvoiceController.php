@@ -13,13 +13,12 @@ use App\Models\Product;
 use App\Models\SiteSetting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Mpdf\Config\ConfigVariables;
 use Mpdf\Config\FontVariables;
 use Mpdf\Mpdf;
 use Mpdf\Output\Destination;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 class InvoiceController extends Controller
@@ -29,9 +28,8 @@ class InvoiceController extends Controller
      */
     public function index(Request $request)
     {
-        $q = Invoice::query();
+        $q = Invoice::query()->with('client'); // لتسريع البحث بالعميل
         $perPage = (int) $request->attributes->get('per_page', 10);
-
 
         if ($s = $request->query('search')) {
             $q->where(function ($w) use ($s) {
@@ -39,14 +37,21 @@ class InvoiceController extends Controller
                     ->orWhereHas('client', fn($c) => $c->where('name', 'like', "%$s%"));
             });
         }
+
         if ($currenc = $request->query('currency')) {
-            $q->where('currency', 'like', "%$currenc%");
+            $q->where('currency', strtoupper((string)$currenc));
         }
 
         if ($clientId = $request->query('client_id')) {
             $q->where('client_id', $clientId);
         }
 
+        // payment_status الجديد (draft/unpaid/partial/paid/cancelled)
+        if ($paymentStatus = $request->query('payment_status')) {
+            $q->where('payment_status', $paymentStatus);
+        }
+
+        // backward compatible: status=unpaid/paid/partial (قديم)
         if ($status = $request->query('status')) {
             if ($status === 'unpaid') {
                 $q->where('paid', '<=', 0);
@@ -57,6 +62,13 @@ class InvoiceController extends Controller
             }
         }
 
+        // overdue filter
+        if ($request->boolean('overdue')) {
+            $q->whereNotNull('due_date')
+                ->whereDate('due_date', '<', now()->toDateString())
+                ->whereIn('payment_status', ['unpaid', 'partial']);
+        }
+
         return $q->latest('id')->paginate($perPage);
     }
 
@@ -65,14 +77,34 @@ class InvoiceController extends Controller
         $client = Client::findOrFail($request->client_id);
 
         $invoice = DB::transaction(function () use ($request, $client) {
-            $currency = $request->currency;
+            $currency = strtoupper((string) $request->currency);
             $discount = (float) ($request->input('discount', 0));
             $paid = (float) ($request->input('paid', 0));
 
-            $itemsReq = $request->items;
-            ['items' => $items, 'subtotal' => $subtotal] = $this->buildInvoiceItems($itemsReq, $currency);
+            $paymentMethod = $request->input('payment_method', 'cash');
+            $paymentStatus = $request->input('payment_status', 'draft');
 
-            $total = max(0, $subtotal - $discount);
+            $itemsReq = $request->items;
+
+            [
+                'items' => $items,
+                'subtotal' => $subtotal,
+                'discount_total' => $discountTotal,
+                'tax_total' => $taxTotal,
+            ] = $this->buildInvoiceItems($itemsReq, $currency);
+
+            // إجمالي الفاتورة = (Subtotal بعد خصم السطور + TaxTotal) - خصم عام
+            $total = max(0, ($subtotal + $taxTotal) - $discount);
+            $paid = min($paid, $total);
+
+            // تحقق الحد الائتماني
+            $currentDue = Invoice::where('client_id', $client->id)
+                ->whereColumn('total', '>', 'paid')
+                ->sum(DB::raw('total - paid'));
+
+            if ($client->credit_limit > 0 && ($currentDue + $total) > $client->credit_limit) {
+                abort(422, 'Credit limit exceeded');
+            }
 
             $inv = Invoice::create([
                 'client_id' => $client->id,
@@ -80,10 +112,16 @@ class InvoiceController extends Controller
                 'date' => $request->date,
                 'due_date' => $request->due_date,
                 'currency' => $currency,
+
+                'payment_method' => $paymentMethod,
+                'payment_status' => $paymentStatus,
+
                 'subtotal' => round($subtotal, 2),
                 'discount' => round($discount, 2),
+                'tax_total' => round($taxTotal, 2),
                 'total' => round($total, 2),
-                'paid' => min($paid, $total),
+                'paid' => round($paid, 2),
+
                 'notes' => $request->notes,
             ]);
 
@@ -94,6 +132,8 @@ class InvoiceController extends Controller
                 $inv->items()->create($it);
             }
 
+            $this->syncPaymentStatus($inv);
+
             return $inv->load(['client', 'items']);
         });
 
@@ -102,33 +142,54 @@ class InvoiceController extends Controller
 
     public function show(Request $request, Invoice $invoice)
     {
-        return $invoice->load(['client', 'items']);
+        return $invoice->load(['client', 'items', 'attachments']);
     }
 
     public function update(UpdateInvoiceRequest $request, Invoice $invoice)
     {
         $updated = DB::transaction(function () use ($request, $invoice) {
+            // لو هتغير items لازم نرجع المخزون القديم الأول
+            if ($request->has('items')) {
+                $this->restoreStockFromInvoice($invoice);
+            }
+
             if ($request->has('client_id')) {
                 $client = Client::findOrFail($request->client_id);
                 $invoice->client_id = $client->id;
             }
 
+            // payment fields
+            if ($request->has('payment_method')) {
+                $invoice->payment_method = $request->input('payment_method', $invoice->payment_method);
+            }
+            if ($request->has('payment_status')) {
+                $invoice->payment_status = $request->input('payment_status', $invoice->payment_status);
+            }
+
             $invoice->fill($request->only(['date', 'due_date', 'currency', 'discount', 'notes']));
 
             if ($request->has('items')) {
-                $currency = $request->input('currency', $invoice->currency);
+                $currency = strtoupper((string) $request->input('currency', $invoice->currency));
 
                 $itemsReq = $request->items;
-                ['items' => $items, 'subtotal' => $subtotal] = $this->buildInvoiceItems($itemsReq, $currency);
+
+                [
+                    'items' => $items,
+                    'subtotal' => $subtotal,
+                    'discount_total' => $discountTotal,
+                    'tax_total' => $taxTotal,
+                ] = $this->buildInvoiceItems($itemsReq, $currency);
 
                 $discount = (float) $request->input('discount', $invoice->discount);
-                $total = max(0, $subtotal - $discount);
+                $total = max(0, ($subtotal + $taxTotal) - $discount);
 
                 $invoice->currency = $currency;
                 $invoice->subtotal = round($subtotal, 2);
                 $invoice->discount = round($discount, 2);
+                $invoice->tax_total = round($taxTotal, 2);
                 $invoice->total = round($total, 2);
 
+                // استبدال العناصر
                 $invoice->items()->delete();
                 foreach ($items as $it) {
                     $invoice->items()->create($it);
@@ -140,6 +201,10 @@ class InvoiceController extends Controller
             }
 
             $invoice->save();
+
+            // مزامنة payment_status حسب paid/total لو ماكانش cancelled
+            $this->syncPaymentStatus($invoice);
+
             return $invoice->load(['client', 'items']);
         });
 
@@ -148,73 +213,195 @@ class InvoiceController extends Controller
 
     public function destroy(Request $request, Invoice $invoice)
     {
-        $invoice->delete();
+        DB::transaction(function () use ($invoice) {
+            // رجّع المخزون قبل الحذف (للمنتجات فقط)
+            $this->restoreStockFromInvoice($invoice);
+            $invoice->delete();
+        });
+
         return response()->json(['message' => __('messages.deleted')]);
     }
+
+    
     private function buildInvoiceItems(array $itemsReq, string $currency): array
     {
-        $productIds = collect($itemsReq)->pluck('product_id')->unique()->values();
+        $productIds = collect($itemsReq)
+            ->where('item_type', 'product')
+            ->pluck('product_id')
+            ->filter()
+            ->unique()
+            ->values();
 
         $products = Product::whereIn('id', $productIds)
             ->with(['prices' => fn($price) => $price->where('currency', $currency)])
-            ->lockForUpdate() 
+            ->lockForUpdate()
             ->get()
             ->keyBy('id');
 
-        $missingProductIds = $productIds->diff($products->keys());
-        if ($missingProductIds->isNotEmpty()) {
+        $missing = $productIds->diff($products->keys());
+        if ($missing->isNotEmpty()) {
             abort(422, __('messages.invalid_products'));
         }
 
         $items = [];
         $subtotal = 0.0;
+        $discountTotal = 0.0;
+        $taxTotal = 0.0;
 
         foreach ($itemsReq as $row) {
-            $product = $products[$row['product_id']];
-            $productPrice = $product->prices->first();
+            $type = $row['item_type'] ?? 'product';
+            $qty = (float) ($row['quantity'] ?? 1);
 
-            if (!$productPrice) {
-                abort(422, __('messages.currency_mismatch'));
+            if ($qty <= 0) abort(422, __('messages.invalid_quantity'));
+
+            $unitPrice = 0.0;
+            $name = '';
+            $desc = null;
+            $productId = null;
+
+            if ($type === 'product') {
+                $productId = (int) $row['product_id'];
+                $product = $products[$productId] ?? null;
+
+                if (!$product) abort(422, __('messages.invalid_products'));
+
+                $productPrice = $product->prices->first();
+                if (!$productPrice) abort(422, __('messages.currency_mismatch'));
+
+                // ✅ تحقق المخزون
+                if ((int)$product->stock < (int)$qty) abort(422, __('messages.out_of_stock'));
+
+                // ✅ خصم المخزون
+                $product->decrement('stock', (int)$qty);
+
+                $unitPrice = (float) $productPrice->price;
+                $name = $product->name;
+                $desc = $product->description;
+
+                // default tax from product if not provided
+                $row['tax_type'] = $row['tax_type'] ?? $product->default_tax_type ?? 'no_tax';
+                $row['tax_rate'] = $row['tax_rate'] ?? (float)($product->default_tax_rate ?? 0);
+            } else {
+                // service
+                $unitPrice = (float) ($row['unit_price'] ?? 0);
+                $name = (string) ($row['name'] ?? 'Service');
+                $desc = $row['description'] ?? null;
             }
 
-            $qty = (int) $row['quantity'];
-            if ($qty <= 0) {
-                abort(422, __('messages.invalid_quantity'));
+            $lineBase = $unitPrice * $qty;
+
+            // discount per line
+            $discountType = $row['discount_type'] ?? 'none';
+            $discountValue = (float) ($row['discount_value'] ?? 0);
+
+            $lineDiscount = 0.0;
+            if ($discountType === 'amount') {
+                $lineDiscount = min($discountValue, $lineBase);
+            } elseif ($discountType === 'percent') {
+                $lineDiscount = min(($discountValue / 100.0) * $lineBase, $lineBase);
             }
 
-            // ✅ تحقق المخزون
-            if ((int)$product->stock < $qty) {
-                abort(422, __('messages.out_of_stock'));
+            $lineAfterDiscount = max(0, $lineBase - $lineDiscount);
+
+            // tax per line
+            $taxType = $row['tax_type'] ?? 'no_tax';
+            $taxRate = (float) ($row['tax_rate'] ?? 0);
+
+            $lineTax = 0.0;
+            $lineTotal = $lineAfterDiscount;
+
+            if ($taxType === 'exclusive' && $taxRate > 0) {
+                $lineTax = ($taxRate / 100.0) * $lineAfterDiscount;
+                $lineTotal = $lineAfterDiscount + $lineTax;
+            } elseif ($taxType === 'inclusive' && $taxRate > 0) {
+                $lineTax = $lineAfterDiscount - ($lineAfterDiscount / (1 + ($taxRate / 100.0)));
+                $lineTotal = $lineAfterDiscount; // شامل
             }
 
-            // ✅ خصم المخزون
-            $product->decrement('stock', $qty);
-
-            $unit = (float) $productPrice->price;
-            $line = $qty * $unit;
-
-            $subtotal += $line;
+            $subtotal += $lineAfterDiscount;
+            $discountTotal += $lineDiscount;
+            $taxTotal += $lineTax;
 
             $items[] = [
-                'product_id' => $product->id,
-                'product_name' => $product->name,
-                'product_description' => $product->description,
-                'unit_price' => $unit,
-                'quantity' => $qty,
-                'line_total' => $line,
+                'item_type' => $type,
+                'product_id' => $productId,
+                'product_name' => $name,
+                'product_description' => $desc,
+
+                'unit_price' => round($unitPrice, 2),
+                'quantity' => round($qty, 2),
+
+                'discount_type' => $discountType,
+                'discount_value' => round($discountValue, 2),
+
+                'tax_type' => $taxType,
+                'tax_rate' => round($taxRate, 2),
+
+                'line_total' => round($lineTotal, 2),
             ];
         }
 
         return [
             'items' => $items,
             'subtotal' => $subtotal,
+            'discount_total' => $discountTotal,
+            'tax_total' => $taxTotal,
         ];
     }
 
+    /**
+     * رجّع المخزون للمنتجات في الفاتورة قبل تعديل items أو حذف invoice
+     */
+    private function restoreStockFromInvoice(Invoice $invoice): void
+    {
+        $invoice->loadMissing('items');
+
+        $productQtyMap = $invoice->items
+            ->where('item_type', 'product')
+            ->whereNotNull('product_id')
+            ->groupBy('product_id')
+            ->map(fn($rows) => (int) round($rows->sum('quantity')));
+
+        if ($productQtyMap->isEmpty()) return;
+
+        $products = Product::whereIn('id', $productQtyMap->keys())
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+
+        foreach ($productQtyMap as $pid => $qty) {
+            if (isset($products[$pid]) && $qty > 0) {
+                $products[$pid]->increment('stock', $qty);
+            }
+        }
+    }
 
     private function numberFromId(int $id): string
     {
         return 'INV-' . str_pad((string) $id, 6, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * مزامنة حالة الدفع بناءً على paid/total (لو مش cancelled)
+     */
+    private function syncPaymentStatus(Invoice $invoice): void
+    {
+        if ($invoice->payment_status === 'cancelled') return;
+
+        $total = (float) $invoice->total;
+        $paid  = (float) $invoice->paid;
+
+        if ($total <= 0) {
+            $invoice->payment_status = 'paid';
+        } elseif ($paid <= 0) {
+            $invoice->payment_status = 'unpaid';
+        } elseif ($paid + 0.00001 < $total) {
+            $invoice->payment_status = 'partial';
+        } else {
+            $invoice->payment_status = 'paid';
+        }
+
+        $invoice->save();
     }
 
     public function pdf(Request $request, Invoice $invoice)

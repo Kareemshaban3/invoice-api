@@ -3,45 +3,99 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreInvoiceRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
         return true;
     }
 
-    protected function prepareForValidation(): void
-    {
-        if (is_string($this->input('currency'))) {
-            $this->merge(['currency' => strtoupper($this->input('currency'))]);
-        }
-    }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
-     */
     public function rules(): array
     {
         return [
             'client_id' => ['required', 'integer', 'exists:clients,id'],
-            'currency' => ['required', 'string', 'size:3', 'regex:/^[A-Z]{3}$/'],
-
             'date' => ['required', 'date'],
             'due_date' => ['nullable', 'date'],
 
+            'currency' => ['required', 'string', 'size:3'],
+
+            'payment_method' => ['nullable', Rule::in(['cash', 'transfer', 'card', 'credit'])],
+            'payment_status' => ['nullable', Rule::in(['draft', 'unpaid', 'partial', 'paid', 'cancelled'])],
+
             'discount' => ['nullable', 'numeric', 'min:0'],
             'paid' => ['nullable', 'numeric', 'min:0'],
+
             'notes' => ['nullable', 'string'],
 
             'items' => ['required', 'array', 'min:1'],
-            'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
-            'items.*.quantity' => ['required', 'numeric', 'min:0.01'],
+
+            'items.*.item_type' => ['required', Rule::in(['product', 'service'])],
+
+            'items.*.product_id' => [
+                'required_if:items.*.item_type,product',
+                'integer',
+                'exists:products,id',
+            ],
+
+            'items.*.name' => ['required_if:items.*.item_type,service', 'string', 'max:255'],
+            'items.*.description' => ['nullable', 'string'],
+            'items.*.unit_price' => ['required_if:items.*.item_type,service', 'numeric', 'min:0'],
+
+            'items.*.quantity' => ['required', 'numeric', 'min:0.000001'],
+
+            'items.*.discount_type' => ['nullable', Rule::in(['none', 'amount', 'percent'])],
+            'items.*.discount_value' => ['nullable', 'numeric', 'min:0'],
+
+            'items.*.tax_type' => ['nullable', Rule::in(['no_tax', 'exclusive', 'inclusive'])],
+            'items.*.tax_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
         ];
+    }
+
+
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator) {
+            $items = $this->input('items', []);
+            foreach ($items as $i => $row) {
+                $type = $row['item_type'] ?? 'product';
+
+                if ($type === 'product') {
+                    if (empty($row['product_id'])) {
+                        $validator->errors()->add("items.$i.product_id", 'product_id is required for product items');
+                    }
+                } else {
+                    if (empty($row['name'])) {
+                        $validator->errors()->add("items.$i.name", 'name is required for service items');
+                    }
+                    if (!array_key_exists('unit_price', $row)) {
+                        $validator->errors()->add("items.$i.unit_price", 'unit_price is required for service items');
+                    }
+                }
+
+                $discountType = $row['discount_type'] ?? 'none';
+                $discountValue = (float) ($row['discount_value'] ?? 0);
+
+                if ($discountType === 'percent' && ($discountValue < 0 || $discountValue > 100)) {
+                    $validator->errors()->add("items.$i.discount_value", 'discount_value must be between 0 and 100 for percent discount');
+                }
+
+                $taxType = $row['tax_type'] ?? 'no_tax';
+                $taxRate = (float) ($row['tax_rate'] ?? 0);
+
+                if ($taxType !== 'no_tax' && ($taxRate <= 0)) {
+                    $validator->errors()->add("items.$i.tax_rate", 'tax_rate must be > 0 when tax_type is exclusive/inclusive');
+                }
+            }
+        });
+    }
+
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('currency')) {
+            $this->merge(['currency' => strtoupper((string) $this->input('currency'))]);
+        }
     }
 }

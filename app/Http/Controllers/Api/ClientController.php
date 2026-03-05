@@ -6,15 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreClientRequest;
 use App\Http\Requests\UpdateClientRequest;
 use App\Models\Client;
-use GuzzleHttp\Promise\Create;
 use Illuminate\Http\Request;
 
 class ClientController extends Controller
 {
-    
-    /**
-     * Display a listing of the resource.
-     */
     public function index(Request $request)
     {
         $q = Client::query();
@@ -28,47 +23,38 @@ class ClientController extends Controller
             });
         }
 
-        return $q->latest()->paginate($perPage);
+        return $q->latest('id')->paginate($perPage);
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(StoreClientRequest  $request)
+    public function store(StoreClientRequest $request)
     {
-        $clinet = Client::create($request->validated());
+        $client = Client::create($request->validated());
+
         return response()->json([
             'message' => __('messages.created'),
-            'data' => $clinet,
+            'data' => $client,
         ], 201);
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
+    public function show(Client $client)
     {
-        $clinet = Client::findOrFail($id);
-        return response()->json([
-            'message' => __('messages.created'),
-            'data' => $clinet,
-        ], 201);
+        return response()->json(['data' => $client], 200);
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
     public function update(UpdateClientRequest $request, Client $client)
     {
         $client->update($request->validated());
-        return response()->json(['message' => __('messages.updated'), 'data' => $client]);
+
+        return response()->json([
+            'message' => __('messages.updated'),
+            'data' => $client
+        ]);
     }
-    /**
-     * Remove the specified resource from storage.
-     */
+
     public function destroy(Client $client)
     {
         $client->delete();
+
         return response()->json(['message' => __('messages.deleted')]);
     }
 }

@@ -1,0 +1,27 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void
+    {
+        Schema::create('invoice_attachments', function (Blueprint $table) {
+            $table->id();
+
+            $table->foreignId('invoice_id')->constrained()->cascadeOnDelete();
+
+            $table->enum('type', ['contract', 'design', 'purchase_order', 'other'])->default('other');
+            $table->string('file_path');
+            $table->string('original_name')->nullable();
+
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('invoice_attachments');
+    }
+};

@@ -6,18 +6,25 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreProductRequest;
 use App\Http\Requests\UpdateProductRequest;
 use App\Models\Product;
+use App\Models\ProductPrice;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class ProductController extends Controller
 {
     public function index(Request $request)
     {
-        $q = Product::query()->with(['prices', 'category']);
+        $q = Product::query()->with(['prices', 'category', 'supplier']);
+
         $perPage = (int) $request->attributes->get('per_page', 10);
 
         if ($s = $request->query('search')) {
-            $q->where('name', 'like', "%{$s}%");
+            $q->where(function ($w) use ($s) {
+                $w->where('name', 'like', "%{$s}%")
+                    ->orWhere('sku', 'like', "%{$s}%")
+                    ->orWhere('barcode', 'like', "%{$s}%");
+            });
         }
 
         if ($currency = $request->query('currency')) {
@@ -31,8 +38,21 @@ class ProductController extends Controller
             $q->where('category_id', $categoryId);
         }
 
+        if ($supplierId = $request->query('supplier_id')) {
+            $q->where('supplier_id', $supplierId);
+        }
+
+        if ($status = $request->query('status')) {
+            $q->where('status', $status);
+        }
+
         if ($request->boolean('in_stock')) {
             $q->where('stock', '>', 0);
+        }
+
+        if ($request->boolean('low_stock')) {
+            $q->where('reorder_level', '>', 0)
+                ->whereColumn('stock', '<=', 'reorder_level');
         }
 
         return $q->latest('id')->paginate($perPage);
@@ -42,24 +62,33 @@ class ProductController extends Controller
     {
         $data = $request->validated();
 
-        $product = DB::transaction(function () use ($data) {
-            $product = Product::create([
-                'category_id' => $data['category_id'],
-                'name' => $data['name'],
-                'description' => $data['description'] ?? null,
-                'stock' => (int) $data['stock'],
-            ]);
+        $product = DB::transaction(function () use ($request, $data) {
+            // image upload
+            if ($request->hasFile('image')) {
+                $data['image_path'] = $request->file('image')->store('products', 'public');
+            }
 
-            $prices = collect($data['prices'])
-                ->map(fn($row) => [
-                    'currency' => $row['currency'],
-                    'price' => $row['price'],
-                ])
-                ->all();
+            // SKU generate if empty (لو انت عاملها بالـ Model event سيبها)
+            if (empty($data['sku'])) {
+                $data['sku'] = Product::generateSku();
+            }
 
-            $product->prices()->createMany($prices);
+            $prices = $data['prices'] ?? [];
+            unset($data['prices']);
 
-            return $product->load(['prices', 'category']);
+            /** @var Product $product */
+            $product = Product::create($data);
+
+            if (!empty($prices)) {
+                foreach ($prices as $row) {
+                    ProductPrice::updateOrCreate(
+                        ['product_id' => $product->id, 'currency' => strtoupper($row['currency'])],
+                        ['price' => $row['price']]
+                    );
+                }
+            }
+
+            return $product->load(['prices', 'category', 'supplier']);
         });
 
         return response()->json(['message' => __('messages.created'), 'data' => $product], 201);
@@ -69,26 +98,32 @@ class ProductController extends Controller
     {
         $data = $request->validated();
 
-        $updated = DB::transaction(function () use ($data, $product) {
-            $productData = collect($data)->only(['name', 'description', 'category_id', 'stock'])->all();
-
-            if (!empty($productData)) {
-                $product->update($productData);
+        $updated = DB::transaction(function () use ($request, $data, $product) {
+            if ($request->hasFile('image')) {
+                if ($product->image_path) {
+                    Storage::disk('public')->delete($product->image_path);
+                }
+                $data['image_path'] = $request->file('image')->store('products', 'public');
             }
 
-            if (array_key_exists('prices', $data)) {
-                $prices = collect($data['prices'])
-                    ->map(fn($row) => [
-                        'currency' => $row['currency'],
-                        'price' => $row['price'],
-                    ])
-                    ->all();
+            $prices = $data['prices'] ?? null;
+            unset($data['prices']);
 
-                $product->prices()->delete();
-                $product->prices()->createMany($prices);
+            if (!empty($data)) {
+                $product->update($data);
             }
 
-            return $product->load(['prices', 'category']);
+            // لو prices اتبعتت: Upsert
+            if (is_array($prices)) {
+                foreach ($prices as $row) {
+                    ProductPrice::updateOrCreate(
+                        ['product_id' => $product->id, 'currency' => strtoupper($row['currency'])],
+                        ['price' => $row['price']]
+                    );
+                }
+            }
+
+            return $product->load(['prices', 'category', 'supplier']);
         });
 
         return response()->json(['message' => __('messages.updated'), 'data' => $updated]);
@@ -96,6 +131,10 @@ class ProductController extends Controller
 
     public function destroy(Product $product)
     {
+        if ($product->image_path) {
+            Storage::disk('public')->delete($product->image_path);
+        }
+
         $product->delete();
         return response()->json(['message' => __('messages.deleted')]);
     }

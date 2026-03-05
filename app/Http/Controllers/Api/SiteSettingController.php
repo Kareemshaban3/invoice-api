@@ -31,7 +31,6 @@ class SiteSettingController extends Controller
         return response()->json(['message' => 'Saved', 'data' => $settings]);
     }
 
-    // رفع اللوجو
     public function uploadLogo(Request $request)
     {
         $request->validate([
@@ -40,7 +39,6 @@ class SiteSettingController extends Controller
 
         $settings = SiteSetting::first() ?? SiteSetting::create([]);
 
-        // احذف القديم
         if ($settings->logo_path) {
             Storage::disk('public')->delete($settings->logo_path);
         }

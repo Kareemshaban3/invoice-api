@@ -4,16 +4,19 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
     public function up(): void
     {
-        Schema::create('clients', function (Blueprint $table) {
+        Schema::create('suppliers', function (Blueprint $table) {
             $table->id();
-
             $table->string('name');
+            $table->string('email')->unique();
             $table->string('phone')->nullable();
-            $table->string('email')->nullable();
-            $table->enum('type', ['individual', 'company'])->default('individual');
+            $table->string('city');
             $table->enum('country', [
                 'Egypt',
                 'Saudi Arabia',
@@ -35,28 +38,38 @@ return new class extends Migration {
                 "Somalia",
             ])->nullable();
 
-
             $table->text('address')->nullable();
 
+
             $table->string('tax_number')->nullable();
-            $table->string('commercial_register')->nullable();
+
+            $table->unsignedSmallInteger('payment_terms_days')->default(0); // 30/60
             $table->decimal('credit_limit', 12, 2)->default(0);
             $table->decimal('opening_balance', 12, 2)->default(0);
 
             $table->enum('default_payment_method', ['cash', 'transfer', 'card', 'credit'])
-                ->default('cash');
+                ->default('transfer');
 
-          
-            $table->text('internal_notes')->nullable();
+            // بيانات البنك
+            $table->string('bank_name')->nullable();
+            $table->string('bank_account_number')->nullable();
+            $table->string('iban')->nullable();
+
+            $table->enum('status', ['active', 'suspended', 'archived'])->default('active');
+            $table->text('notes')->nullable();
+
 
             $table->timestamps();
 
-            $table->index(['email', 'name']);
+            $table->index(['name', 'phone']);
         });
     }
 
+    /**
+     * Reverse the migrations.
+     */
     public function down(): void
     {
-        Schema::dropIfExists('clients');
+        Schema::dropIfExists('suppliers');
     }
 };

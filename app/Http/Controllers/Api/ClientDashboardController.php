@@ -13,13 +13,11 @@ class ClientDashboardController extends Controller
     {
         $perPage = (int) $request->attributes->get('per_page', 10);
 
-        // Base query
         $base = Invoice::query()->where('client_id', $client->id);
 
-        // Filters
         $currency = $request->query('currency');
         if ($currency) {
-            $base->where('currency', $currency);
+            $base->where('currency', strtoupper((string)$currency));
         }
 
         $year = $request->query('year');
@@ -32,6 +30,13 @@ class ClientDashboardController extends Controller
             $base->whereMonth('date', (int) $month);
         }
 
+        // new payment_status filter
+        $paymentStatus = $request->query('payment_status');
+        if ($paymentStatus) {
+            $base->where('payment_status', $paymentStatus);
+        }
+
+        // backward compatible status
         $status = $request->query('status');
         if ($status) {
             if ($status === 'unpaid') {
@@ -86,6 +91,7 @@ class ClientDashboardController extends Controller
                 'currency' => $currency,
                 'year' => $year,
                 'month' => $month,
+                'payment_status' => $paymentStatus,
                 'status' => $status,
                 'search' => $s,
             ],

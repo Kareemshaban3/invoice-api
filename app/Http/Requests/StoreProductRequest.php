@@ -2,12 +2,16 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Product;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class StoreProductRequest extends FormRequest
 {
-    public function authorize(): bool { return true; }
+    public function authorize(): bool
+    {
+        return true;
+    }
 
     protected function prepareForValidation(): void
     {
@@ -30,15 +34,32 @@ class StoreProductRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'category_id' => ['required', 'integer', 'exists:categories,id'],
-            'name' => ['required', 'string', 'max:255', Rule::unique('products', 'name')],
+            'sku' => ['nullable', 'string', 'max:255', 'unique:products,sku'],
+            'barcode' => ['nullable', 'string', 'max:255', 'unique:products,barcode'],
+
+            'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
 
-            'stock' => ['required', 'integer', 'min:0'],
+            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
+            'supplier_id' => ['nullable', 'integer', 'exists:suppliers,id'],
 
-            'prices' => ['required', 'array', 'min:1'],
-            'prices.*.currency' => ['required', 'string', 'size:3', 'regex:/^[A-Z]{3}$/', 'distinct'],
-            'prices.*.price' => ['required', 'numeric', 'min:0'],
+            'stock' => ['nullable', 'integer', 'min:0'],
+            'reorder_level' => ['nullable', 'integer', 'min:0'],
+
+            'unit' => ['required', Rule::in(Product::UNITS)],
+
+            'cost_price' => ['nullable', 'numeric', 'min:0'],
+
+            'default_tax_type' => ['required', Rule::in(Product::TAX_TYPES)],
+            'default_tax_rate' => ['required', 'numeric', 'min:0', 'max:100'],
+
+            'status' => ['required', Rule::in(Product::STATUSES)],
+
+            'image' => ['nullable', 'image', 'max:4096'],
+
+            'prices' => ['nullable', 'array'],
+            'prices.*.currency' => ['required_with:prices', 'string', 'size:3'],
+            'prices.*.price' => ['required_with:prices', 'numeric', 'min:0'],
         ];
     }
 }

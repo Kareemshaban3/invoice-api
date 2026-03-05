@@ -3,22 +3,39 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Client extends Model
 {
-    protected $fillable = ['name','phone','email','country'];
+    protected $fillable = [
+        'name',
+        'type',
+        'phone',
+        'email',
+        'country_code',
+        'address',
+        'tax_number',
+        'commercial_register',
+        'credit_limit',
+        'opening_balance',
+        'default_payment_method',
+        'sales_rep_id',
+        'internal_notes'
+    ];
 
-    protected $appends = ['total_due'];
+    protected $casts = [
+        'credit_limit' => 'decimal:2',
+        'opening_balance' => 'decimal:2',
+    ];
 
-    public function invoices()
+    public function salesRep(): BelongsTo
     {
-        return $this->hasMany(Invoice::class);
+        return $this->belongsTo(User::class, 'sales_rep_id');
     }
 
-    public function getTotalDueAttribute()
+    public function invoices(): HasMany
     {
-        return (float) $this->invoices()
-            ->selectRaw('COALESCE(SUM(total - paid), 0) as due_sum')
-            ->value('due_sum');
+        return $this->hasMany(Invoice::class);
     }
 }
