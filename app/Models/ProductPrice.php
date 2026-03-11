@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProductPrice extends Model
 {
-    protected $fillable = ['product_id', 'price', 'currency'];
+    protected $fillable = ['product_id', 'price', 'currency_id'];
 
     protected $casts = [
         'price' => 'decimal:2',
@@ -16,6 +16,10 @@ class ProductPrice extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+    public function currency(): BelongsTo
+    {
+        return $this->belongsTo(Currency::class);
     }
 }
 

@@ -8,6 +8,7 @@ use App\Http\Requests\StoreInvoiceRequest;
 use App\Http\Requests\UpdateInvoiceRequest;
 use App\Mail\InvoiceMail;
 use App\Models\Client;
+use App\Models\Currency;
 use App\Models\Invoice;
 use App\Models\Product;
 use App\Models\SiteSetting;
@@ -23,35 +24,30 @@ use Throwable;
 
 class InvoiceController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index(Request $request)
     {
-        $q = Invoice::query()->with('client'); // لتسريع البحث بالعميل
+        $q = Invoice::query()->with(['client', 'currency']);
         $perPage = (int) $request->attributes->get('per_page', 10);
 
         if ($s = $request->query('search')) {
             $q->where(function ($w) use ($s) {
-                $w->where('number', 'like', "%$s%")
-                    ->orWhereHas('client', fn($c) => $c->where('name', 'like', "%$s%"));
+                $w->where('number', 'like', "%{$s}%")
+                    ->orWhereHas('client', fn($c) => $c->where('name', 'like', "%{$s}%"));
             });
         }
 
-        if ($currenc = $request->query('currency')) {
-            $q->where('currency', strtoupper((string)$currenc));
+        if ($currencyId = $request->query('currency_id')) {
+            $q->where('currency_id', $currencyId);
         }
 
         if ($clientId = $request->query('client_id')) {
             $q->where('client_id', $clientId);
         }
 
-        // payment_status الجديد (draft/unpaid/partial/paid/cancelled)
         if ($paymentStatus = $request->query('payment_status')) {
             $q->where('payment_status', $paymentStatus);
         }
 
-        // backward compatible: status=unpaid/paid/partial (قديم)
         if ($status = $request->query('status')) {
             if ($status === 'unpaid') {
                 $q->where('paid', '<=', 0);
@@ -62,7 +58,6 @@ class InvoiceController extends Controller
             }
         }
 
-        // overdue filter
         if ($request->boolean('overdue')) {
             $q->whereNotNull('due_date')
                 ->whereDate('due_date', '<', now()->toDateString())
@@ -77,27 +72,25 @@ class InvoiceController extends Controller
         $client = Client::findOrFail($request->client_id);
 
         $invoice = DB::transaction(function () use ($request, $client) {
-            $currency = strtoupper((string) $request->currency);
-            $discount = (float) ($request->input('discount', 0));
+            $currencyId = (int) $request->currency_id;
+            $currency = Currency::findOrFail($currencyId);
+
+            $invoiceDiscount = (float) ($request->input('discount', 0));
             $paid = (float) ($request->input('paid', 0));
 
             $paymentMethod = $request->input('payment_method', 'cash');
             $paymentStatus = $request->input('payment_status', 'draft');
-
-            $itemsReq = $request->items;
 
             [
                 'items' => $items,
                 'subtotal' => $subtotal,
                 'discount_total' => $discountTotal,
                 'tax_total' => $taxTotal,
-            ] = $this->buildInvoiceItems($itemsReq, $currency);
+            ] = $this->buildInvoiceItems($request->items, $currency->id);
 
-            // إجمالي الفاتورة = (Subtotal بعد خصم السطور + TaxTotal) - خصم عام
-            $total = max(0, ($subtotal + $taxTotal) - $discount);
+            $total = max(0, ($subtotal + $taxTotal) - $invoiceDiscount);
             $paid = min($paid, $total);
 
-            // تحقق الحد الائتماني
             $currentDue = Invoice::where('client_id', $client->id)
                 ->whereColumn('total', '>', 'paid')
                 ->sum(DB::raw('total - paid'));
@@ -111,17 +104,14 @@ class InvoiceController extends Controller
                 'number' => 'TMP',
                 'date' => $request->date,
                 'due_date' => $request->due_date,
-                'currency' => $currency,
-
+                'currency_id' => $currency->id,
                 'payment_method' => $paymentMethod,
                 'payment_status' => $paymentStatus,
-
                 'subtotal' => round($subtotal, 2),
-                'discount' => round($discount, 2),
+                'discount' => round($invoiceDiscount, 2),
                 'tax_total' => round($taxTotal, 2),
                 'total' => round($total, 2),
                 'paid' => round($paid, 2),
-
                 'notes' => $request->notes,
             ]);
 
@@ -134,21 +124,31 @@ class InvoiceController extends Controller
 
             $this->syncPaymentStatus($inv);
 
-            return $inv->load(['client', 'items']);
+            return $inv->load(['client', 'currency', 'items', 'attachments']);
         });
 
-        return response()->json(['message' => __('messages.created'), 'data' => $invoice], 201);
+        return response()->json([
+            'message' => __('messages.created'),
+            'data' => $invoice,
+            'summary' => [
+                'subtotal' => $invoice->subtotal,
+                'discount' => $invoice->discount,
+                'tax_total' => $invoice->tax_total,
+                'total' => $invoice->total,
+                'paid' => $invoice->paid,
+                'remaining_amount' => $invoice->remaining_amount,
+            ],
+        ], 201);
     }
 
     public function show(Request $request, Invoice $invoice)
     {
-        return $invoice->load(['client', 'items', 'attachments']);
+        return $invoice->load(['client', 'currency', 'items', 'attachments']);
     }
 
     public function update(UpdateInvoiceRequest $request, Invoice $invoice)
     {
         $updated = DB::transaction(function () use ($request, $invoice) {
-            // لو هتغير items لازم نرجع المخزون القديم الأول
             if ($request->has('items')) {
                 $this->restoreStockFromInvoice($invoice);
             }
@@ -158,39 +158,42 @@ class InvoiceController extends Controller
                 $invoice->client_id = $client->id;
             }
 
-            // payment fields
+            if ($request->has('currency_id')) {
+                $currency = Currency::findOrFail((int) $request->input('currency_id'));
+                $invoice->currency_id = $currency->id;
+            }
+
             if ($request->has('payment_method')) {
                 $invoice->payment_method = $request->input('payment_method', $invoice->payment_method);
             }
+
             if ($request->has('payment_status')) {
                 $invoice->payment_status = $request->input('payment_status', $invoice->payment_status);
             }
 
-            $invoice->fill($request->only(['date', 'due_date', 'currency', 'discount', 'notes']));
+            $invoice->fill($request->only(['date', 'due_date', 'discount', 'notes']));
 
             if ($request->has('items')) {
-                $currency = strtoupper((string) $request->input('currency', $invoice->currency));
-
-                $itemsReq = $request->items;
+                $currencyId = (int) $request->input('currency_id', $invoice->currency_id);
 
                 [
                     'items' => $items,
                     'subtotal' => $subtotal,
                     'discount_total' => $discountTotal,
                     'tax_total' => $taxTotal,
-                ] = $this->buildInvoiceItems($itemsReq, $currency);
+                ] = $this->buildInvoiceItems($request->items, $currencyId);
 
-                $discount = (float) $request->input('discount', $invoice->discount);
-                $total = max(0, ($subtotal + $taxTotal) - $discount);
+                $invoiceDiscount = (float) $request->input('discount', $invoice->discount);
+                $total = max(0, ($subtotal + $taxTotal) - $invoiceDiscount);
 
-                $invoice->currency = $currency;
+                $invoice->currency_id = $currencyId;
                 $invoice->subtotal = round($subtotal, 2);
-                $invoice->discount = round($discount, 2);
+                $invoice->discount = round($invoiceDiscount, 2);
                 $invoice->tax_total = round($taxTotal, 2);
                 $invoice->total = round($total, 2);
 
-                // استبدال العناصر
                 $invoice->items()->delete();
+
                 foreach ($items as $it) {
                     $invoice->items()->create($it);
                 }
@@ -202,19 +205,28 @@ class InvoiceController extends Controller
 
             $invoice->save();
 
-            // مزامنة payment_status حسب paid/total لو ماكانش cancelled
             $this->syncPaymentStatus($invoice);
 
-            return $invoice->load(['client', 'items']);
+            return $invoice->load(['client', 'currency', 'items', 'attachments']);
         });
 
-        return response()->json(['message' => __('messages.updated'), 'data' => $updated]);
+        return response()->json([
+            'message' => __('messages.updated'),
+            'data' => $updated,
+            'summary' => [
+                'subtotal' => $updated->subtotal,
+                'discount' => $updated->discount,
+                'tax_total' => $updated->tax_total,
+                'total' => $updated->total,
+                'paid' => $updated->paid,
+                'remaining_amount' => $updated->remaining_amount,
+            ],
+        ]);
     }
 
     public function destroy(Request $request, Invoice $invoice)
     {
         DB::transaction(function () use ($invoice) {
-            // رجّع المخزون قبل الحذف (للمنتجات فقط)
             $this->restoreStockFromInvoice($invoice);
             $invoice->delete();
         });
@@ -222,9 +234,10 @@ class InvoiceController extends Controller
         return response()->json(['message' => __('messages.deleted')]);
     }
 
-    
-    private function buildInvoiceItems(array $itemsReq, string $currency): array
+    private function buildInvoiceItems(array $itemsReq, int $currencyId): array
     {
+        $currency = Currency::findOrFail($currencyId);
+
         $productIds = collect($itemsReq)
             ->where('item_type', 'product')
             ->pluck('product_id')
@@ -233,7 +246,9 @@ class InvoiceController extends Controller
             ->values();
 
         $products = Product::whereIn('id', $productIds)
-            ->with(['prices' => fn($price) => $price->where('currency', $currency)])
+            ->with([
+                'prices' => fn($price) => $price->where('currency_id', $currency->id),
+            ])
             ->lockForUpdate()
             ->get()
             ->keyBy('id');
@@ -252,7 +267,9 @@ class InvoiceController extends Controller
             $type = $row['item_type'] ?? 'product';
             $qty = (float) ($row['quantity'] ?? 1);
 
-            if ($qty <= 0) abort(422, __('messages.invalid_quantity'));
+            if ($qty <= 0) {
+                abort(422, __('messages.invalid_quantity'));
+            }
 
             $unitPrice = 0.0;
             $name = '';
@@ -263,47 +280,47 @@ class InvoiceController extends Controller
                 $productId = (int) $row['product_id'];
                 $product = $products[$productId] ?? null;
 
-                if (!$product) abort(422, __('messages.invalid_products'));
+                if (!$product) {
+                    abort(422, __('messages.invalid_products'));
+                }
 
                 $productPrice = $product->prices->first();
-                if (!$productPrice) abort(422, __('messages.currency_mismatch'));
+                if (!$productPrice) {
+                    abort(422, __('messages.currency_mismatch'));
+                }
 
-                // ✅ تحقق المخزون
-                if ((int)$product->stock < (int)$qty) abort(422, __('messages.out_of_stock'));
+                if ((int) $product->stock < (int) $qty) {
+                    abort(422, __('messages.out_of_stock'));
+                }
 
-                // ✅ خصم المخزون
-                $product->decrement('stock', (int)$qty);
+                $product->decrement('stock', (int) $qty);
 
                 $unitPrice = (float) $productPrice->price;
                 $name = $product->name;
                 $desc = $product->description;
 
-                // default tax from product if not provided
                 $row['tax_type'] = $row['tax_type'] ?? $product->default_tax_type ?? 'no_tax';
-                $row['tax_rate'] = $row['tax_rate'] ?? (float)($product->default_tax_rate ?? 0);
+                $row['tax_rate'] = $row['tax_rate'] ?? (float) ($product->default_tax_rate ?? 0);
             } else {
-                // service
                 $unitPrice = (float) ($row['unit_price'] ?? 0);
                 $name = (string) ($row['name'] ?? 'Service');
                 $desc = $row['description'] ?? null;
             }
 
-            $lineBase = $unitPrice * $qty;
+            $lineSubtotal = $unitPrice * $qty;
 
-            // discount per line
             $discountType = $row['discount_type'] ?? 'none';
             $discountValue = (float) ($row['discount_value'] ?? 0);
 
             $lineDiscount = 0.0;
             if ($discountType === 'amount') {
-                $lineDiscount = min($discountValue, $lineBase);
+                $lineDiscount = min($discountValue, $lineSubtotal);
             } elseif ($discountType === 'percent') {
-                $lineDiscount = min(($discountValue / 100.0) * $lineBase, $lineBase);
+                $lineDiscount = min(($discountValue / 100.0) * $lineSubtotal, $lineSubtotal);
             }
 
-            $lineAfterDiscount = max(0, $lineBase - $lineDiscount);
+            $lineAfterDiscount = max(0, $lineSubtotal - $lineDiscount);
 
-            // tax per line
             $taxType = $row['tax_type'] ?? 'no_tax';
             $taxRate = (float) ($row['tax_rate'] ?? 0);
 
@@ -315,7 +332,7 @@ class InvoiceController extends Controller
                 $lineTotal = $lineAfterDiscount + $lineTax;
             } elseif ($taxType === 'inclusive' && $taxRate > 0) {
                 $lineTax = $lineAfterDiscount - ($lineAfterDiscount / (1 + ($taxRate / 100.0)));
-                $lineTotal = $lineAfterDiscount; // شامل
+                $lineTotal = $lineAfterDiscount;
             }
 
             $subtotal += $lineAfterDiscount;
@@ -327,16 +344,16 @@ class InvoiceController extends Controller
                 'product_id' => $productId,
                 'product_name' => $name,
                 'product_description' => $desc,
-
                 'unit_price' => round($unitPrice, 2),
                 'quantity' => round($qty, 2),
-
                 'discount_type' => $discountType,
                 'discount_value' => round($discountValue, 2),
-
                 'tax_type' => $taxType,
                 'tax_rate' => round($taxRate, 2),
-
+                'line_subtotal' => round($lineSubtotal, 2),
+                'line_discount' => round($lineDiscount, 2),
+                'line_after_discount' => round($lineAfterDiscount, 2),
+                'line_tax' => round($lineTax, 2),
                 'line_total' => round($lineTotal, 2),
             ];
         }
@@ -349,9 +366,6 @@ class InvoiceController extends Controller
         ];
     }
 
-    /**
-     * رجّع المخزون للمنتجات في الفاتورة قبل تعديل items أو حذف invoice
-     */
     private function restoreStockFromInvoice(Invoice $invoice): void
     {
         $invoice->loadMissing('items');
@@ -362,7 +376,9 @@ class InvoiceController extends Controller
             ->groupBy('product_id')
             ->map(fn($rows) => (int) round($rows->sum('quantity')));
 
-        if ($productQtyMap->isEmpty()) return;
+        if ($productQtyMap->isEmpty()) {
+            return;
+        }
 
         $products = Product::whereIn('id', $productQtyMap->keys())
             ->lockForUpdate()
@@ -381,15 +397,14 @@ class InvoiceController extends Controller
         return 'INV-' . str_pad((string) $id, 6, '0', STR_PAD_LEFT);
     }
 
-    /**
-     * مزامنة حالة الدفع بناءً على paid/total (لو مش cancelled)
-     */
     private function syncPaymentStatus(Invoice $invoice): void
     {
-        if ($invoice->payment_status === 'cancelled') return;
+        if ($invoice->payment_status === 'cancelled') {
+            return;
+        }
 
         $total = (float) $invoice->total;
-        $paid  = (float) $invoice->paid;
+        $paid = (float) $invoice->paid;
 
         if ($total <= 0) {
             $invoice->payment_status = 'paid';
@@ -406,7 +421,7 @@ class InvoiceController extends Controller
 
     public function pdf(Request $request, Invoice $invoice)
     {
-        $invoice->load(['client', 'items']);
+        $invoice->load(['client', 'currency', 'items']);
 
         $fileName = $invoice->number . '.pdf';
         $pdfContent = $this->renderInvoicePdf($invoice);
@@ -419,7 +434,7 @@ class InvoiceController extends Controller
 
     public function pdfDownload(Invoice $invoice)
     {
-        $invoice->load(['client', 'items']);
+        $invoice->load(['client', 'currency', 'items']);
 
         $fileName = $invoice->number . '.pdf';
         $pdfContent = $this->renderInvoicePdf($invoice);
@@ -485,7 +500,7 @@ class InvoiceController extends Controller
 
     public function sendEmail(SendInvoiceEmailRequest $request, Invoice $invoice)
     {
-        $invoice->load(['client', 'items']);
+        $invoice->load(['client', 'currency', 'items']);
 
         $to = $request->filled('to') ? $request->input('to') : ($invoice->client->email ?? null);
         if (!$to) {
@@ -494,7 +509,7 @@ class InvoiceController extends Controller
 
         try {
             $pdfBinary = $this->renderInvoicePdf($invoice);
-            $fileName  = $invoice->number . '.pdf';
+            $fileName = $invoice->number . '.pdf';
 
             $mailable = new InvoiceMail($invoice, $pdfBinary, $fileName);
 
@@ -507,7 +522,7 @@ class InvoiceController extends Controller
 
             return response()->json([
                 'message' => app()->getLocale() === 'ar' ? 'تم إرسال الفاتورة بالبريد' : 'Invoice emailed successfully',
-                'to' => $to
+                'to' => $to,
             ]);
         } catch (Throwable $e) {
             Log::error('Invoice email failed', [
@@ -518,7 +533,7 @@ class InvoiceController extends Controller
 
             return response()->json([
                 'message' => app()->getLocale() === 'ar' ? 'فشل إرسال البريد' : 'Email sending failed',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }

@@ -9,9 +9,24 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Invoice extends Model
 {
     protected $fillable = [
-        'client_id','number','date','due_date','currency',
-        'payment_method','payment_status',
-        'subtotal','discount','tax_total','total','paid','notes'
+        'client_id',
+        'number',
+        'date',
+        'due_date',
+        'currency_id',
+        'payment_method',
+        'payment_status',
+        'subtotal',
+        'discount',
+        'tax_total',
+        'total',
+        'paid',
+        'notes',
+    ];
+
+    protected $appends = [
+        'is_overdue',
+        'remaining_amount',
     ];
 
     protected $casts = [
@@ -39,9 +54,24 @@ class Invoice extends Model
         return $this->hasMany(InvoiceAttachment::class);
     }
 
+    public function currency(): BelongsTo
+    {
+        return $this->belongsTo(Currency::class);
+    }
+
     public function getIsOverdueAttribute(): bool
     {
-        if (!$this->due_date) return false;
-        return $this->due_date->isPast() && in_array($this->payment_status, ['unpaid','partial'], true);
+        if (!$this->due_date) {
+            return false;
+        }
+
+        return $this->due_date->isPast()
+            && in_array($this->payment_status, ['unpaid', 'partial'], true);
+    }
+
+    public function getRemainingAmountAttribute(): string
+    {
+        $remaining = max(0, (float) $this->total - (float) $this->paid);
+        return number_format($remaining, 2, '.', '');
     }
 }

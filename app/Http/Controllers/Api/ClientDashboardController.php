@@ -15,30 +15,24 @@ class ClientDashboardController extends Controller
 
         $base = Invoice::query()->where('client_id', $client->id);
 
-        $currency = $request->query('currency');
-        if ($currency) {
-            $base->where('currency', strtoupper((string)$currency));
+        // فلترة بالعملة باستخدام currency_id
+        if ($currencyId = $request->query('currency_id')) {
+            $base->where('currency_id', (int) $currencyId);
         }
 
-        $year = $request->query('year');
-        if ($year) {
+        if ($year = $request->query('year')) {
             $base->whereYear('date', (int) $year);
         }
 
-        $month = $request->query('month');
-        if ($month) {
+        if ($month = $request->query('month')) {
             $base->whereMonth('date', (int) $month);
         }
 
-        // new payment_status filter
-        $paymentStatus = $request->query('payment_status');
-        if ($paymentStatus) {
+        if ($paymentStatus = $request->query('payment_status')) {
             $base->where('payment_status', $paymentStatus);
         }
 
-        // backward compatible status
-        $status = $request->query('status');
-        if ($status) {
+        if ($status = $request->query('status')) {
             if ($status === 'unpaid') {
                 $base->where('paid', '<=', 0);
             } elseif ($status === 'paid') {
@@ -48,35 +42,34 @@ class ClientDashboardController extends Controller
             }
         }
 
-        $s = $request->query('search');
-        if ($s) {
+        if ($s = $request->query('search')) {
             $base->where('number', 'like', "%$s%");
         }
 
         $summaryRow = (clone $base)->selectRaw("
-            COALESCE(SUM(total),0) as total_sum,
-            COALESCE(SUM(paid),0) as paid_sum,
-            COALESCE(SUM(discount),0) as discount_sum,
-            COALESCE(SUM(total - paid),0) as due_sum
-        ")->first();
+        COALESCE(SUM(total),0) as total_sum,
+        COALESCE(SUM(paid),0) as paid_sum,
+        COALESCE(SUM(discount),0) as discount_sum,
+        COALESCE(SUM(total - paid),0) as due_sum
+    ")->first();
 
         $totalsByCurrency = (clone $base)->selectRaw("
-            currency,
-            COALESCE(SUM(total),0) as total_sum,
-            COALESCE(SUM(paid),0) as paid_sum,
-            COALESCE(SUM(discount),0) as discount_sum,
-            COALESCE(SUM(total - paid),0) as due_sum
-        ")
-            ->groupBy('currency')
-            ->orderBy('currency')
+        currency_id,
+        COALESCE(SUM(total),0) as total_sum,
+        COALESCE(SUM(paid),0) as paid_sum,
+        COALESCE(SUM(discount),0) as discount_sum,
+        COALESCE(SUM(total - paid),0) as due_sum
+    ")
+            ->groupBy('currency_id')
+            ->orderBy('currency_id')
             ->get();
 
         $chart = (clone $base)->selectRaw("
-            DATE(date) as day,
-            COALESCE(SUM(total),0) as total_sum,
-            COALESCE(SUM(paid),0) as paid_sum,
-            COALESCE(SUM(total - paid),0) as due_sum
-        ")
+        DATE(date) as day,
+        COALESCE(SUM(total),0) as total_sum,
+        COALESCE(SUM(paid),0) as paid_sum,
+        COALESCE(SUM(total - paid),0) as due_sum
+    ")
             ->groupBy('day')
             ->orderBy('day')
             ->get();
@@ -88,7 +81,7 @@ class ClientDashboardController extends Controller
         return response()->json([
             'client' => $client,
             'filters' => [
-                'currency' => $currency,
+                'currency_id' => $currencyId,
                 'year' => $year,
                 'month' => $month,
                 'payment_status' => $paymentStatus,
@@ -96,7 +89,7 @@ class ClientDashboardController extends Controller
                 'search' => $s,
             ],
             'summary' => [
-                'currency' => $currency,
+                'currency_id' => $currencyId,
                 'total_sum' => (float) $summaryRow->total_sum,
                 'paid_sum' => (float) $summaryRow->paid_sum,
                 'discount_sum' => (float) $summaryRow->discount_sum,

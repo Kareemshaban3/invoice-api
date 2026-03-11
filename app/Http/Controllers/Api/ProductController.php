@@ -15,7 +15,7 @@ class ProductController extends Controller
 {
     public function index(Request $request)
     {
-        $q = Product::query()->with(['prices', 'category', 'supplier']);
+        $q = Product::query()->with(['prices.currency', 'category', 'supplier']);
 
         $perPage = (int) $request->attributes->get('per_page', 10);
 
@@ -30,8 +30,8 @@ class ProductController extends Controller
         if ($currency = $request->query('currency')) {
             $currency = strtoupper((string) $currency);
 
-            $q->whereHas('prices', fn($price) => $price->where('currency', $currency))
-                ->with(['prices' => fn($price) => $price->where('currency', $currency)]);
+            $q->whereHas('prices.currency', fn($q) => $q->where('code', $currency))
+              ->with(['prices' => fn($price) => $price->whereHas('currency', fn($q) => $q->where('code', $currency))]);
         }
 
         if ($categoryId = $request->query('category_id')) {
@@ -68,7 +68,7 @@ class ProductController extends Controller
                 $data['image_path'] = $request->file('image')->store('products', 'public');
             }
 
-            // SKU generate if empty (لو انت عاملها بالـ Model event سيبها)
+            // SKU generate if empty
             if (empty($data['sku'])) {
                 $data['sku'] = Product::generateSku();
             }
@@ -82,13 +82,16 @@ class ProductController extends Controller
             if (!empty($prices)) {
                 foreach ($prices as $row) {
                     ProductPrice::updateOrCreate(
-                        ['product_id' => $product->id, 'currency' => strtoupper($row['currency'])],
+                        [
+                            'product_id' => $product->id,
+                            'currency_id' => $row['currency_id'], // استخدم currency_id
+                        ],
                         ['price' => $row['price']]
                     );
                 }
             }
 
-            return $product->load(['prices', 'category', 'supplier']);
+            return $product->load(['prices.currency', 'category', 'supplier']);
         });
 
         return response()->json(['message' => __('messages.created'), 'data' => $product], 201);
@@ -117,13 +120,16 @@ class ProductController extends Controller
             if (is_array($prices)) {
                 foreach ($prices as $row) {
                     ProductPrice::updateOrCreate(
-                        ['product_id' => $product->id, 'currency' => strtoupper($row['currency'])],
+                        [
+                            'product_id' => $product->id,
+                            'currency_id' => $row['currency_id'], // استخدم currency_id
+                        ],
                         ['price' => $row['price']]
                     );
                 }
             }
 
-            return $product->load(['prices', 'category', 'supplier']);
+            return $product->load(['prices.currency', 'category', 'supplier']);
         });
 
         return response()->json(['message' => __('messages.updated'), 'data' => $updated]);

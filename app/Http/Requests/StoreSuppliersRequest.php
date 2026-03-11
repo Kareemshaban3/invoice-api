@@ -16,7 +16,7 @@ class StoreSuppliersRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            'phone' => ['required', 'string', 'max:20'],
+            'phone' => ['required', 'string', 'max:20', Rule::unique('suppliers', 'phone')],
             'email' => ['nullable', 'email', 'max:255', Rule::unique('suppliers', 'email')],
 
             'country' => ['nullable', Rule::in([
@@ -31,7 +31,7 @@ class StoreSuppliersRequest extends FormRequest
 
             'payment_terms_days' => ['nullable', 'integer', 'min:0', 'max:3650'],
             'credit_limit' => ['nullable', 'numeric', 'min:0'],
-            'opening_balance' => ['nullable', 'numeric'],
+            'opening_balance' => ['nullable', 'numeric', 'min:0'],
 
             'default_payment_method' => ['nullable', Rule::in(['cash', 'transfer', 'card', 'credit'])],
 

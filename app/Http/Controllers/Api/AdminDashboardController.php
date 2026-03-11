@@ -13,17 +13,9 @@ class AdminDashboardController extends Controller
     {
         $year = $request->query("year");
         $month = $request->query("month");
-
-
-
-
-
         $status = $request->query("status");
-
         $search = $request->query("search");
-
-        $currency = $request->query('currency');
-
+        $currencyId = $request->query('currency_id');
 
         $base = Invoice::query();
 
@@ -33,11 +25,9 @@ class AdminDashboardController extends Controller
         if ($search) {
             $base->where("number", "like", "%{$search}%");
         }
-        if ($currency) {
-            $base->where("currency", $currency );
+        if ($currencyId) {
+            $base->where("currency_id", (int)$currencyId);
         }
-
-
 
         if ($status) {
             if ($status === 'unpaid') {
@@ -52,43 +42,29 @@ class AdminDashboardController extends Controller
         $invoicesCountAll = (clone $base)->count();
 
         $totalsByCurrency = (clone $base)->selectRaw("
-            currency,
-            COUNT(*) as invoices_count,
-            COALESCE(SUM(total),0) as total_sum,
-            COALESCE(SUM(paid),0) as paid_sum,
-            COALESCE(SUM(discount),0) as discount_sum,
-            COALESCE(SUM(total - paid),0) as due_sum
-        ")
-            ->groupBy('currency')
-            ->orderBy('currency')
-            ->get();
-
-
-        $totalsByCurrency = (clone $base)->selectRaw("
-            currency,
-            COUNT(*) as invoices_count,
-            COALESCE(SUM(total),0) as total_sum,
-            COALESCE(SUM(paid),0) as paid_sum,
-            COALESCE(SUM(discount),0) as discount_sum,
-            COALESCE(SUM(total - paid),0) as due_sum
-        ")
-            ->groupBy('currency')
-            ->orderBy('currency')
+        currency_id,
+        COUNT(*) as invoices_count,
+        COALESCE(SUM(total),0) as total_sum,
+        COALESCE(SUM(paid),0) as paid_sum,
+        COALESCE(SUM(discount),0) as discount_sum,
+        COALESCE(SUM(total - paid),0) as due_sum
+    ")
+            ->groupBy('currency_id')
+            ->orderBy('currency_id')
             ->get();
 
         $chartByCurrency = (clone $base)->selectRaw("
-            currency,
-            DATE(date) as day,
-            COUNT(*) as invoices_count,
-            COALESCE(SUM(total),0) as total_sum,
-            COALESCE(SUM(paid),0) as paid_sum,
-            COALESCE(SUM(total - paid),0) as due_sum
-        ")
-            ->groupBy('currency', 'day')
-            ->orderBy('currency')
+        currency_id,
+        DATE(date) as day,
+        COUNT(*) as invoices_count,
+        COALESCE(SUM(total),0) as total_sum,
+        COALESCE(SUM(paid),0) as paid_sum,
+        COALESCE(SUM(total - paid),0) as due_sum
+    ")
+            ->groupBy('currency_id', 'day')
+            ->orderBy('currency_id')
             ->orderBy('day')
             ->get();
-
 
         return response()->json([
             'filters' => [
@@ -96,6 +72,7 @@ class AdminDashboardController extends Controller
                 'month' => $month,
                 'status' => $status,
                 'search' => $search,
+                'currency_id' => $currencyId,
             ],
             'summary_all' => [
                 'invoices_count' => $invoicesCountAll,

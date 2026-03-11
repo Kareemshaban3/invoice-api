@@ -16,9 +16,8 @@ return new class extends Migration {
 
       $table->unsignedInteger('items_per_page')->default(10);
 
-      $table->string('default_currency', 3)->default('EGP'); // أو /SAR/OMR حسبك
+      $table->string('default_currency', 3)->default('EGP');
 
-      // اللوجو هيتخزن path (مش الصورة نفسها في DB)
       $table->string('logo_path')->nullable();
 
       $table->longText('invoice_footer')->nullable();

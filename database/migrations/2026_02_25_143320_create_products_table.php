@@ -25,24 +25,21 @@ return new class extends Migration {
                 ->constrained('suppliers')
                 ->nullOnDelete();
 
+            $table->foreignId('units_id')->nullable()
+                ->constrained('units')
+                ->nullOnDelete();
+
+
             $table->unsignedInteger('stock')->default(0);
             $table->unsignedInteger('reorder_level')->default(0);
 
-            $table->enum('unit', [
-                'piece',
-                'carton',
-                'meter',
-                'kilogram',
-                'half_kilo',
-                'hour',
-                'service'
-            ])->default('piece');
+
 
             $table->decimal('cost_price', 12, 2)->default(0);
 
 
             $table->enum('default_tax_type', ['no_tax', 'exclusive', 'inclusive'])->default('no_tax');
-            $table->decimal('default_tax_rate', 5, 2)->default(0); 
+            $table->decimal('default_tax_rate', 5, 2)->default(0);
 
             $table->enum('status', ['active', 'suspended', 'archived'])->default('active');
 

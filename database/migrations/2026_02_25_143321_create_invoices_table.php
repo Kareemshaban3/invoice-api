@@ -16,7 +16,7 @@ return new class extends Migration {
             $table->date('date');
             $table->date('due_date')->nullable();
 
-            $table->string('currency', 3)->default('EGP');
+            $table->foreignId('currency_id')->constrained('currencies')->cascadeOnDelete();
 
             $table->decimal('subtotal', 12, 2)->default(0);
             $table->decimal('discount', 12, 2)->default(0);

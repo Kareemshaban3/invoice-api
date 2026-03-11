@@ -10,11 +10,15 @@ return new class extends Migration {
         Schema::create('invoice_items', function (Blueprint $table) {
             $table->id();
 
-            $table->foreignId('invoice_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('invoice_id')
+                ->constrained()
+                ->cascadeOnDelete();
 
-            $table->enum('item_type', ['product', 'service'])->default('product');
+            $table->enum('item_type', ['product', 'service'])
+                ->default('product');
 
-            $table->foreignId('product_id')->nullable()
+            $table->foreignId('product_id')
+                ->nullable()
                 ->constrained('products')
                 ->restrictOnDelete();
 
@@ -25,11 +29,23 @@ return new class extends Migration {
 
             $table->decimal('quantity', 12, 2)->default(1);
 
-            $table->enum('discount_type', ['none', 'amount', 'percent'])->default('none');
+            $table->enum('discount_type', ['none', 'amount', 'percent'])
+                ->default('none');
+
             $table->decimal('discount_value', 12, 2)->default(0);
 
-            $table->enum('tax_type', ['no_tax', 'exclusive', 'inclusive'])->default('no_tax');
+            $table->enum('tax_type', ['no_tax', 'exclusive', 'inclusive'])
+                ->default('no_tax');
+
             $table->decimal('tax_rate', 5, 2)->default(0);
+
+            $table->decimal('line_subtotal', 12, 2)->default(0);
+
+            $table->decimal('line_discount', 12, 2)->default(0);
+
+            $table->decimal('line_after_discount', 12, 2)->default(0);
+
+            $table->decimal('line_tax', 12, 2)->default(0);
 
             $table->decimal('line_total', 12, 2)->default(0);
 

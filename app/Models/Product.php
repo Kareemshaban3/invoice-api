@@ -18,7 +18,7 @@ class Product extends Model
         'supplier_id',
         'stock',
         'reorder_level',
-        'unit',
+        'units_id',
         'cost_price',
         'default_tax_type',
         'default_tax_rate',
@@ -33,17 +33,6 @@ class Product extends Model
     ];
 
 
-    public const UNITS = [
-        'piece',
-        'carton',
-        'meter',
-        'kilogram',
-        'half_kilo',
-        'hour',
-        'service'
-    ];
-
-
 
     public const TAX_TYPES = ['no_tax', 'exclusive', 'inclusive'];
     public const STATUSES = ['active', 'suspended', 'archived'];
@@ -53,7 +42,7 @@ class Product extends Model
     {
         return 'PRD-' . str_pad((string) random_int(1, 999999), 6, '0', STR_PAD_LEFT);
     }
-    
+
     public function category(): BelongsTo
     {
         return $this->belongsTo(Category::class);
@@ -72,5 +61,11 @@ class Product extends Model
     public function getIsLowStockAttribute(): bool
     {
         return $this->reorder_level > 0 && $this->stock <= $this->reorder_level;
+    }
+
+
+    public function unit()
+    {
+        return $this->belongsTo(Units::class);
     }
 }

@@ -12,6 +12,10 @@ use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\SiteSettingController;
 use App\Http\Controllers\Api\SuppliersController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\BrancheController;
+use App\Http\Controllers\CurrencyController;
+use App\Http\Controllers\RepresentativeController;
+use App\Http\Controllers\UnitsController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/register', [AuthController::class, 'register']);
@@ -19,7 +23,6 @@ Route::post('/login', [AuthController::class, 'login']);
 
 Route::middleware('auth:sanctum')->group(function () {
 
-    // logout (خليه لأي user مسجل دخول)
     Route::post('/logout', [AuthController::class, 'logout']);
 
     /**
@@ -27,35 +30,48 @@ Route::middleware('auth:sanctum')->group(function () {
      */
     Route::middleware('role:seller,admin')->group(function () {
         // CRUD
-        Route::get('/invoices', [InvoiceController::class, 'index']);
-        Route::post('/invoices', [InvoiceController::class, 'store']);
-        Route::get('/invoices/{invoice}', [InvoiceController::class, 'show']);
-        Route::put('/invoices/{invoice}', [InvoiceController::class, 'update']);
-        Route::delete('/invoices/{invoice}', [InvoiceController::class, 'destroy']);
+        Route::apiResource('/invoices', InvoiceController::class);
+
 
         // PDF + Email
         Route::get('/invoices/{invoice}/pdf', [InvoiceController::class, 'pdf']);
         Route::get('/invoices/{invoice}/pdf/download', [InvoiceController::class, 'pdfDownload']);
         Route::post('/invoices/{invoice}/email', [InvoiceController::class, 'sendEmail']);
 
-      
-        Route::post('/invoices/{invoice}/attachments', [InvoiceAttachmentController::class, 'store']);
-        Route::get('/invoices/{invoice}/attachments', [InvoiceAttachmentController::class, 'index']);
-        Route::delete('/attachments/{attachment}', [InvoiceAttachmentController::class, 'destroy']);
+
+        Route::get('invoices/{invoice}/attachments', [InvoiceAttachmentController::class, 'index']);
+        Route::post('invoices/{invoice}/attachments', [InvoiceAttachmentController::class, 'store']);
+        Route::get('invoices/{invoice}/attachments/{attachment}', [InvoiceAttachmentController::class, 'show']);
+        Route::post('invoices/{invoice}/attachments/{attachment}', [InvoiceAttachmentController::class, 'update']);
+        Route::delete('invoices/{invoice}/attachments/{attachment}', [InvoiceAttachmentController::class, 'destroy']);
     });
 
 
     Route::middleware('role:admin')->group(function () {
 
+        // ✅ clients 
         Route::apiResource('clients', ClientController::class);
+        // ✅ representative
+        Route::apiResource('representative', RepresentativeController::class);
+
         Route::get('/clients/{client}/dashboard', [ClientDashboardController::class, 'show']);
 
+        // ✅ categories 
         Route::apiResource('categories', CategoryController::class);
-
-        // ✅ Products (مع فلتر low_stock وغيره داخل controller)
+        // ✅ Products 
         Route::apiResource('products', ProductController::class);
 
+        // ✅ suppliers 
         Route::apiResource('suppliers', SuppliersController::class);
+
+        // ✅ units 
+        Route::apiResource('units', UnitsController::class);
+
+        // ✅ branch 
+        Route::apiResource('branch', BrancheController::class);
+
+        // ✅ currency
+        Route::apiResource('currency', CurrencyController::class);
 
         // Mail settings
         Route::get('/mail-settings', [MailSettingController::class, 'show']);
@@ -71,8 +87,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/dashboard/admin', [AdminDashboardController::class, 'index']);
 
         // Users
-        Route::get('/users', [UserController::class, 'index']);
-        Route::put('/users/{user}', [UserController::class, 'update']);
-        Route::delete('/users/{user}', [UserController::class, 'destroy']);
+        Route::apiResource('/users', UserController::class);
     });
 });

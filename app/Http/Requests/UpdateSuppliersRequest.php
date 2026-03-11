@@ -18,7 +18,14 @@ class UpdateSuppliersRequest extends FormRequest
 
         return [
             'name' => ['sometimes', 'required', 'string', 'max:255'],
-            'phone' => ['sometimes', 'required', 'string', 'max:20'],
+
+            'phone' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:20',
+                Rule::unique('suppliers', 'phone')->ignore($supplierId),
+            ],
 
             'email' => [
                 'sometimes',
@@ -40,7 +47,7 @@ class UpdateSuppliersRequest extends FormRequest
 
             'payment_terms_days' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:3650'],
             'credit_limit' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'opening_balance' => ['sometimes', 'nullable', 'numeric'],
+            'opening_balance' => ['sometimes', 'nullable', 'numeric', 'min:0'],
 
             'default_payment_method' => ['sometimes', 'nullable', Rule::in(['cash', 'transfer', 'card', 'credit'])],
 

@@ -5,16 +5,16 @@ namespace App\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-class UpdateClientRequest extends FormRequest
+class UpdateRepresentativeRequest extends FormRequest
 {
-    public function authorize(): bool 
-    { 
-        return true; 
+    public function authorize(): bool
+    {
+        return true;
     }
 
     public function rules(): array
     {
-        $id = $this->route('client')?->id; // جلب الـ id من الـ route model binding
+        $id = $this->route('representative')?->id; // جلب الـ id من الـ route model binding
 
         return [
             'name' => ['sometimes', 'required', 'string', 'max:255'],
@@ -25,14 +25,14 @@ class UpdateClientRequest extends FormRequest
                 'nullable',
                 'string',
                 'max:50',
-                Rule::unique('clients', 'phone')->ignore($id),
+                Rule::unique('representatives', 'phone')->ignore($id),
             ],
             'email' => [
                 'sometimes',
                 'nullable',
                 'email',
                 'max:255',
-                Rule::unique('clients', 'email')->ignore($id),
+                Rule::unique('representatives', 'email')->ignore($id),
             ],
 
             'country' => ['sometimes', 'nullable', Rule::in([

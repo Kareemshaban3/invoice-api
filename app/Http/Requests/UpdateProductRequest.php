@@ -20,8 +20,9 @@ class UpdateProductRequest extends FormRequest
         $prices = collect($this->input('prices'))
             ->filter(fn($row) => is_array($row))
             ->map(function ($row) {
-                if (isset($row['currency']) && is_string($row['currency'])) {
-                    $row['currency'] = strtoupper(trim($row['currency']));
+                // نتأكد إن currency_id رقم صحيح
+                if (isset($row['currency_id'])) {
+                    $row['currency_id'] = (int) $row['currency_id'];
                 }
                 return $row;
             })
@@ -45,12 +46,12 @@ class UpdateProductRequest extends FormRequest
             'category_id' => ['sometimes', 'nullable', 'integer', 'exists:categories,id'],
             'supplier_id' => ['sometimes', 'nullable', 'integer', 'exists:suppliers,id'],
 
-            'stock' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'stock' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'reorder_level' => ['sometimes', 'nullable', 'integer', 'min:0'],
 
-            'unit' => ['sometimes', 'required', Rule::in(Product::UNITS)],
+            'units_id' => ['sometimes', 'required', 'integer', 'exists:units,id'],
 
-            'cost_price' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'cost_price' => ['sometimes', 'nullable', 'numeric', 'min:0.01'],
 
             'default_tax_type' => ['sometimes', 'required', Rule::in(Product::TAX_TYPES)],
             'default_tax_rate' => ['sometimes', 'required', 'numeric', 'min:0', 'max:100'],
@@ -60,8 +61,8 @@ class UpdateProductRequest extends FormRequest
             'image' => ['sometimes', 'nullable', 'image', 'max:4096'],
 
             'prices' => ['sometimes', 'nullable', 'array'],
-            'prices.*.currency' => ['required_with:prices', 'string', 'size:3'],
-            'prices.*.price' => ['required_with:prices', 'numeric', 'min:0'],
+            'prices.*.currency_id' => ['required_with:prices', 'integer', 'exists:currencies,id'], // تعديل هنا
+            'prices.*.price' => ['required_with:prices', 'numeric', 'min:0.01'],
         ];
     }
 }

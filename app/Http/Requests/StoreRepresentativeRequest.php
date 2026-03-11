@@ -5,7 +5,7 @@ namespace App\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-class StoreClientRequest extends FormRequest
+class StoreRepresentativeRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -15,14 +15,12 @@ class StoreClientRequest extends FormRequest
     public function rules(): array
     {
         return [
-            // معلومات أساسية
             'name' => ['required', 'string', 'max:255'],
             'type' => ['required', Rule::in(['individual', 'company'])],
 
-            'phone' => ['nullable', 'string', 'max:50', Rule::unique('clients', 'phone')],
-            'email' => ['nullable', 'email', 'max:255', Rule::unique('clients', 'email')],
+            'phone' => ['nullable', 'string', 'max:50', Rule::unique('representatives', 'phone')],
+            'email' => ['nullable', 'email', 'max:255', Rule::unique('representatives', 'email')],
 
-            // الدولة
             'country' => ['nullable', Rule::in([
                 'Egypt',
                 'Saudi Arabia',
@@ -46,7 +44,6 @@ class StoreClientRequest extends FormRequest
             'country_code' => ['nullable', 'string', 'max:5'],
             'address' => ['nullable', 'string'],
 
-            // معلومات مالية
             'tax_number' => ['nullable', 'string', 'max:100'],
             'commercial_register' => ['nullable', 'string', 'max:100'],
 
