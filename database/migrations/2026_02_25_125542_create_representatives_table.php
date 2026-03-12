@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('name');
             $table->string('phone')->nullable();
             $table->string('email')->nullable();
-            $table->enum('type', ['individual', 'company'])->default('individual');
+            $table->enum('type', ['individual', 'company'])->default('company');
             $table->enum('country', [
                 'Egypt',
                 'Saudi Arabia',

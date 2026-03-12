@@ -20,10 +20,11 @@ class UpdateProductRequest extends FormRequest
         $prices = collect($this->input('prices'))
             ->filter(fn($row) => is_array($row))
             ->map(function ($row) {
-                // نتأكد إن currency_id رقم صحيح
+
                 if (isset($row['currency_id'])) {
                     $row['currency_id'] = (int) $row['currency_id'];
                 }
+
                 return $row;
             })
             ->values()
@@ -34,35 +35,77 @@ class UpdateProductRequest extends FormRequest
 
     public function rules(): array
     {
-        $productId = $this->route('product')?->id ?? null;
+        $productId = $this->route('product')?->id;
 
         return [
-            'sku' => ['sometimes', 'nullable', 'string', 'max:255', Rule::unique('products', 'sku')->ignore($productId)],
-            'barcode' => ['sometimes', 'nullable', 'string', 'max:255', Rule::unique('products', 'barcode')->ignore($productId)],
 
-            'name' => ['sometimes', 'required', 'string', 'max:255'],
+            'sku' => [
+                'sometimes',
+                'nullable',
+                'string',
+                Rule::unique('products', 'sku')->ignore($productId)
+            ],
+
+            'barcode' => [
+                'sometimes',
+                'nullable',
+                'string',
+                Rule::unique('products', 'barcode')->ignore($productId)
+            ],
+
+            'name' => ['sometimes', 'required', 'string'],
+
             'description' => ['sometimes', 'nullable', 'string'],
 
-            'category_id' => ['sometimes', 'nullable', 'integer', 'exists:categories,id'],
-            'supplier_id' => ['sometimes', 'nullable', 'integer', 'exists:suppliers,id'],
+            'category_id' => ['sometimes', 'nullable', 'exists:categories,id'],
 
-            'stock' => ['sometimes', 'nullable', 'integer', 'min:1'],
-            'reorder_level' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'supplier_id' => ['sometimes', 'nullable', 'exists:suppliers,id'],
 
-            'units_id' => ['sometimes', 'required', 'integer', 'exists:units,id'],
+            'stock' => ['sometimes', 'integer', 'min:0'],
 
-            'cost_price' => ['sometimes', 'nullable', 'numeric', 'min:0.01'],
+            'reorder_level' => ['sometimes', 'integer', 'min:0'],
 
-            'default_tax_type' => ['sometimes', 'required', Rule::in(Product::TAX_TYPES)],
-            'default_tax_rate' => ['sometimes', 'required', 'numeric', 'min:0', 'max:100'],
+            'units_id' => ['sometimes', 'required', 'exists:units,id'],
 
-            'status' => ['sometimes', 'required', Rule::in(Product::STATUSES)],
+            'cost_price' => ['sometimes', 'nullable', 'numeric'],
 
-            'image' => ['sometimes', 'nullable', 'image', 'max:4096'],
+            'default_tax_type' => [
+                'sometimes',
+                Rule::in(Product::TAX_TYPES)
+            ],
 
-            'prices' => ['sometimes', 'nullable', 'array'],
-            'prices.*.currency_id' => ['required_with:prices', 'integer', 'exists:currencies,id'], // تعديل هنا
-            'prices.*.price' => ['required_with:prices', 'numeric', 'min:0.01'],
+            'default_tax_rate' => [
+                'sometimes',
+                'numeric',
+                'min:0',
+                'max:100'
+            ],
+
+            'status' => [
+                'sometimes',
+                Rule::in(Product::STATUSES)
+            ],
+
+            'image' => [
+                'sometimes',
+                'nullable',
+                'image',
+                'mimes:jpg,jpeg,png,webp',
+                'max:4096'
+            ],
+
+            'prices' => ['sometimes', 'array'],
+
+            'prices.*.currency_id' => [
+                'required_with:prices',
+                'exists:currencies,id'
+            ],
+
+            'prices.*.price' => [
+                'required_with:prices',
+                'numeric',
+                'min:0.01'
+            ],
         ];
     }
 }

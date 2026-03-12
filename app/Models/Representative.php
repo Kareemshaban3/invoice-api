@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Representative extends Model
 {
@@ -27,6 +28,8 @@ class Representative extends Model
         'credit_limit' => 'decimal:2',
         'opening_balance' => 'decimal:2',
     ];
-
-    
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(Invoice::class);
+    }
 }

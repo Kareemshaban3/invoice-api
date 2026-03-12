@@ -26,13 +26,20 @@ class InvoiceController extends Controller
 {
     public function index(Request $request)
     {
-        $q = Invoice::query()->with(['client', 'currency']);
+        $q = Invoice::query()->with([
+            'client',
+            'currency',
+            'branch',
+            'representative',
+        ]);
+
         $perPage = (int) $request->attributes->get('per_page', 10);
 
         if ($s = $request->query('search')) {
             $q->where(function ($w) use ($s) {
                 $w->where('number', 'like', "%{$s}%")
-                    ->orWhereHas('client', fn($c) => $c->where('name', 'like', "%{$s}%"));
+                    ->orWhereHas('client', fn($c) => $c->where('name', 'like', "%{$s}%"))
+                    ->orWhereHas('representative', fn($r) => $r->where('name', 'like', "%{$s}%"));
             });
         }
 
@@ -42,6 +49,14 @@ class InvoiceController extends Controller
 
         if ($clientId = $request->query('client_id')) {
             $q->where('client_id', $clientId);
+        }
+
+        if ($representativeId = $request->query('representatives_id')) {
+            $q->where('representatives_id', $representativeId);
+        }
+
+        if ($branchId = $request->query('branches_id')) {
+            $q->where('branches_id', $branchId);
         }
 
         if ($paymentStatus = $request->query('payment_status')) {
@@ -69,7 +84,11 @@ class InvoiceController extends Controller
 
     public function store(StoreInvoiceRequest $request)
     {
-        $client = Client::findOrFail($request->client_id);
+        $client = null;
+
+        if ($request->filled('client_id')) {
+            $client = Client::findOrFail($request->client_id);
+        }
 
         $invoice = DB::transaction(function () use ($request, $client) {
             $currencyId = (int) $request->currency_id;
@@ -91,16 +110,20 @@ class InvoiceController extends Controller
             $total = max(0, ($subtotal + $taxTotal) - $invoiceDiscount);
             $paid = min($paid, $total);
 
-            $currentDue = Invoice::where('client_id', $client->id)
-                ->whereColumn('total', '>', 'paid')
-                ->sum(DB::raw('total - paid'));
+            if ($client) {
+                $currentDue = Invoice::where('client_id', $client->id)
+                    ->whereColumn('total', '>', 'paid')
+                    ->sum(DB::raw('total - paid'));
 
-            if ($client->credit_limit > 0 && ($currentDue + $total) > $client->credit_limit) {
-                abort(422, 'Credit limit exceeded');
+                if ($client->credit_limit > 0 && ($currentDue + $total) > $client->credit_limit) {
+                    abort(422, 'Credit limit exceeded');
+                }
             }
 
             $inv = Invoice::create([
-                'client_id' => $client->id,
+                'client_id' => $request->filled('client_id') ? $client?->id : null,
+                'representatives_id' => $request->filled('representatives_id') ? $request->input('representatives_id') : null,
+                'branches_id' => $request->input('branches_id'),
                 'number' => 'TMP',
                 'date' => $request->date,
                 'due_date' => $request->due_date,
@@ -124,7 +147,14 @@ class InvoiceController extends Controller
 
             $this->syncPaymentStatus($inv);
 
-            return $inv->load(['client', 'currency', 'items', 'attachments']);
+            return $inv->load([
+                'client',
+                'currency',
+                'items',
+                'attachments',
+                'branch',
+                'representative',
+            ]);
         });
 
         return response()->json([
@@ -143,7 +173,14 @@ class InvoiceController extends Controller
 
     public function show(Request $request, Invoice $invoice)
     {
-        return $invoice->load(['client', 'currency', 'items', 'attachments']);
+        return $invoice->load([
+            'client',
+            'currency',
+            'items',
+            'attachments',
+            'branch',
+            'representative',
+        ]);
     }
 
     public function update(UpdateInvoiceRequest $request, Invoice $invoice)
@@ -154,8 +191,28 @@ class InvoiceController extends Controller
             }
 
             if ($request->has('client_id')) {
-                $client = Client::findOrFail($request->client_id);
-                $invoice->client_id = $client->id;
+                $invoice->client_id = $request->filled('client_id')
+                    ? Client::findOrFail($request->client_id)->id
+                    : null;
+            }
+
+            if ($request->has('representatives_id')) {
+                $invoice->representatives_id = $request->filled('representatives_id')
+                    ? $request->input('representatives_id')
+                    : null;
+            }
+
+            // ضمان أن واحد فقط هو الموجود
+            if ($request->filled('client_id')) {
+                $invoice->representatives_id = null;
+            }
+
+            if ($request->filled('representatives_id')) {
+                $invoice->client_id = null;
+            }
+
+            if ($request->has('branches_id')) {
+                $invoice->branches_id = $request->input('branches_id');
             }
 
             if ($request->has('currency_id')) {
@@ -171,7 +228,12 @@ class InvoiceController extends Controller
                 $invoice->payment_status = $request->input('payment_status', $invoice->payment_status);
             }
 
-            $invoice->fill($request->only(['date', 'due_date', 'discount', 'notes']));
+            $invoice->fill($request->only([
+                'date',
+                'due_date',
+                'discount',
+                'notes',
+            ]));
 
             if ($request->has('items')) {
                 $currencyId = (int) $request->input('currency_id', $invoice->currency_id);
@@ -207,7 +269,14 @@ class InvoiceController extends Controller
 
             $this->syncPaymentStatus($invoice);
 
-            return $invoice->load(['client', 'currency', 'items', 'attachments']);
+            return $invoice->load([
+                'client',
+                'currency',
+                'items',
+                'attachments',
+                'branch',
+                'representative',
+            ]);
         });
 
         return response()->json([
@@ -231,7 +300,9 @@ class InvoiceController extends Controller
             $invoice->delete();
         });
 
-        return response()->json(['message' => __('messages.deleted')]);
+        return response()->json([
+            'message' => __('messages.deleted'),
+        ]);
     }
 
     private function buildInvoiceItems(array $itemsReq, int $currencyId): array
@@ -421,7 +492,13 @@ class InvoiceController extends Controller
 
     public function pdf(Request $request, Invoice $invoice)
     {
-        $invoice->load(['client', 'currency', 'items']);
+        $invoice->load([
+            'client',
+            'currency',
+            'items',
+            'branch',
+            'representative',
+        ]);
 
         $fileName = $invoice->number . '.pdf';
         $pdfContent = $this->renderInvoicePdf($invoice);
@@ -434,7 +511,13 @@ class InvoiceController extends Controller
 
     public function pdfDownload(Invoice $invoice)
     {
-        $invoice->load(['client', 'currency', 'items']);
+        $invoice->load([
+            'client',
+            'currency',
+            'items',
+            'branch',
+            'representative',
+        ]);
 
         $fileName = $invoice->number . '.pdf';
         $pdfContent = $this->renderInvoicePdf($invoice);
@@ -500,9 +583,18 @@ class InvoiceController extends Controller
 
     public function sendEmail(SendInvoiceEmailRequest $request, Invoice $invoice)
     {
-        $invoice->load(['client', 'currency', 'items']);
+        $invoice->load([
+            'client',
+            'currency',
+            'items',
+            'branch',
+            'representative',
+        ]);
 
-        $to = $request->filled('to') ? $request->input('to') : ($invoice->client->email ?? null);
+        $to = $request->filled('to')
+            ? $request->input('to')
+            : ($invoice->client->email ?? null);
+
         if (!$to) {
             return response()->json(['message' => 'Client email not found'], 422);
         }
@@ -521,7 +613,9 @@ class InvoiceController extends Controller
             \Mail::to($to)->send($mailable);
 
             return response()->json([
-                'message' => app()->getLocale() === 'ar' ? 'تم إرسال الفاتورة بالبريد' : 'Invoice emailed successfully',
+                'message' => app()->getLocale() === 'ar'
+                    ? 'تم إرسال الفاتورة بالبريد'
+                    : 'Invoice emailed successfully',
                 'to' => $to,
             ]);
         } catch (Throwable $e) {
@@ -532,7 +626,9 @@ class InvoiceController extends Controller
             ]);
 
             return response()->json([
-                'message' => app()->getLocale() === 'ar' ? 'فشل إرسال البريد' : 'Email sending failed',
+                'message' => app()->getLocale() === 'ar'
+                    ? 'فشل إرسال البريد'
+                    : 'Email sending failed',
                 'error' => $e->getMessage(),
             ], 500);
         }

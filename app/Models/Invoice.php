@@ -22,6 +22,8 @@ class Invoice extends Model
         'total',
         'paid',
         'notes',
+        'branches_id',
+        'representatives_id',
     ];
 
     protected $appends = [
@@ -39,24 +41,34 @@ class Invoice extends Model
         'paid' => 'decimal:2',
     ];
 
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branche::class, 'branches_id');
+    }
+
+    public function representative(): BelongsTo
+    {
+        return $this->belongsTo(Representative::class, 'representatives_id');
+    }
+
     public function client(): BelongsTo
     {
-        return $this->belongsTo(Client::class);
+        return $this->belongsTo(Client::class, 'client_id');
     }
 
     public function items(): HasMany
     {
-        return $this->hasMany(InvoiceItem::class);
+        return $this->hasMany(InvoiceItem::class, 'invoice_id');
     }
 
     public function attachments(): HasMany
     {
-        return $this->hasMany(InvoiceAttachment::class);
+        return $this->hasMany(InvoiceAttachment::class, 'invoice_id');
     }
 
     public function currency(): BelongsTo
     {
-        return $this->belongsTo(Currency::class);
+        return $this->belongsTo(Currency::class, 'currency_id');
     }
 
     public function getIsOverdueAttribute(): bool
@@ -72,6 +84,7 @@ class Invoice extends Model
     public function getRemainingAmountAttribute(): string
     {
         $remaining = max(0, (float) $this->total - (float) $this->paid);
+
         return number_format($remaining, 2, '.', '');
     }
 }

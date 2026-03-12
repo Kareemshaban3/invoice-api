@@ -20,7 +20,6 @@ class StoreProductRequest extends FormRequest
         $prices = collect($this->input('prices'))
             ->filter(fn($row) => is_array($row))
             ->map(function ($row) {
-                // نتأكد إن currency_id رقم صحيح
                 if (isset($row['currency_id'])) {
                     $row['currency_id'] = (int) $row['currency_id'];
                 }
@@ -56,7 +55,7 @@ class StoreProductRequest extends FormRequest
 
             'status' => ['required', Rule::in(Product::STATUSES)],
 
-            'image' => ['nullable', 'image', 'max:4096'],
+            'image' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:4096'],
 
             'prices' => ['nullable', 'array'],
             'prices.*.currency_id' => ['required_with:prices', 'integer', 'exists:currencies,id'], // تعديل هنا

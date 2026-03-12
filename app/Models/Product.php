@@ -5,9 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
 
 class Product extends Model
 {
+
     protected $fillable = [
         'sku',
         'barcode',
@@ -32,15 +34,25 @@ class Product extends Model
         'default_tax_rate' => 'decimal:2',
     ];
 
-
-
     public const TAX_TYPES = ['no_tax', 'exclusive', 'inclusive'];
+
     public const STATUSES = ['active', 'suspended', 'archived'];
 
+    protected $appends = [
+        'image_url',
+        'is_low_stock'
+    ];
+
+    public function getImageUrlAttribute(): ?string
+    {
+        return $this->image_path
+            ? asset('storage/' . $this->image_path)
+            : null;
+    }
 
     public static function generateSku(): string
     {
-        return 'PRD-' . str_pad((string) random_int(1, 999999), 6, '0', STR_PAD_LEFT);
+        return 'PRD-' . str_pad(random_int(1, 999999), 6, '0', STR_PAD_LEFT);
     }
 
     public function category(): BelongsTo
@@ -53,6 +65,11 @@ class Product extends Model
         return $this->belongsTo(Suppliers::class);
     }
 
+    public function unit(): BelongsTo
+    {
+        return $this->belongsTo(Units::class, 'units_id');
+    }
+
     public function prices(): HasMany
     {
         return $this->hasMany(ProductPrice::class);
@@ -61,11 +78,5 @@ class Product extends Model
     public function getIsLowStockAttribute(): bool
     {
         return $this->reorder_level > 0 && $this->stock <= $this->reorder_level;
-    }
-
-
-    public function unit()
-    {
-        return $this->belongsTo(Units::class);
     }
 }
